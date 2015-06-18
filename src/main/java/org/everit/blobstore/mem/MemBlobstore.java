@@ -2,9 +2,8 @@ package org.everit.blobstore.mem;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
@@ -51,24 +50,18 @@ public class MemBlobstore implements Blobstore {
    * and releases the lock of that belongs to the blob on the end of the transaction.
    */
   private final class BlobManipulationXAResource implements XAResource {
-    private final long blobId;
 
     private final ReentrantLock lock;
 
-    private final Consumer<T>
+    private final int transactionTimeout = 600;
 
-    private final BlobData newData;
-
-    private BlobManipulationXAResource(final long blobId, final ReentrantLock lock,
-        final BlobData newData) {
-      this.blobId = blobId;
+    private BlobManipulationXAResource(final ReentrantLock lock) {
       this.lock = lock;
-      this.newData = newData;
     }
 
     @Override
     public void commit(final Xid xid, final boolean onePhase) throws XAException {
-      blobs.put(blobId, newData);
+      blobs.commitTransaction();
       if (lock != null) {
         lock.unlock();
       }
@@ -76,25 +69,33 @@ public class MemBlobstore implements Blobstore {
 
     @Override
     public void end(final Xid xid, final int flags) throws XAException {
+      if (flags == XAResource.TMSUSPEND) {
+        blobs.suspendTransaction(xid);
+      }
     }
 
     @Override
     public void forget(final Xid xid) throws XAException {
+      blobs.forgetTransaction();
     }
 
     @Override
     public int getTransactionTimeout() throws XAException {
-      return 0;
+      return transactionTimeout;
     }
 
     @Override
     public boolean isSameRM(final XAResource xares) throws XAException {
-      return false;
+      return this.equals(xares);
     }
 
     @Override
     public int prepare(final Xid xid) throws XAException {
-      return 0;
+      boolean success = blobs.prepareTransaction();
+      if (!success) {
+        throw new XAException("Blob map transaction cannot be prepared.");
+      }
+      return XAResource.XA_OK;
     }
 
     @Override
@@ -104,6 +105,7 @@ public class MemBlobstore implements Blobstore {
 
     @Override
     public void rollback(final Xid xid) throws XAException {
+      blobs.rollbackTransaction();
       if (lock != null) {
         lock.unlock();
       }
@@ -116,10 +118,15 @@ public class MemBlobstore implements Blobstore {
 
     @Override
     public void start(final Xid xid, final int flags) throws XAException {
+      if (flags == XAResource.TMRESUME) {
+        blobs.resumeTransaction(xid);
+      } else {
+        blobs.startTransaction(transactionTimeout, TimeUnit.SECONDS);
+      }
     }
   }
 
-  private final Map<Long, BlobData> blobs = new ConcurrentHashMap<>();
+  private final BlobMap blobs = new BlobMap("blobs");
 
   private final AtomicLong nextBlobId = new AtomicLong();
 
@@ -143,7 +150,9 @@ public class MemBlobstore implements Blobstore {
 
   @Override
   public void deleteBlob(final long blobId) {
-    blobs.remove(blobId);
+    BlobData blobData = getBlobDataForUpdateAndLock(blobId);
+    blobData.lock.lock();
+    runManipulationAction();
   }
 
   private BlobData getBlobDataForUpdateAndLock(final long blobId) {
@@ -177,6 +186,10 @@ public class MemBlobstore implements Blobstore {
     readingAction.accept(new MemBlobAccessorImpl(data, data.version, true));
   }
 
+  private boolean runManipulationAction(final Consumer<BlobData> action) {
+    transactionManager.getStatus();
+  }
+
   @Override
   public void updateBlob(final long blobId, final Consumer<BlobAccessor> updatingAction) {
     Objects.requireNonNull(updatingAction);
@@ -202,7 +215,7 @@ public class MemBlobstore implements Blobstore {
     } else {
       try {
         Transaction transaction = transactionManager.getTransaction();
-        transaction.enlistResource(new BlobManipulationXAResource(blobId, data.lock, newData));
+        transaction.enlistResource(new BlobManipulationXAResource(data.lock));
       } catch (SystemException | IllegalStateException | RollbackException e) {
         if (data.lock.isLocked()) {
           data.lock.unlock();
