@@ -140,15 +140,11 @@ public class BlobstoreTest {
         blobAccessor.seek(blobAccessor.size());
         blobAccessor.write(new byte[] { 1 }, 0, 1);
       });
-      blobStore.readBlob(blobId, (blobReader) -> Assert.assertEquals(1, blobReader.size()));
+      blobStore.readBlob(blobId, (blobReader) -> Assert.assertEquals(2, blobReader.size()));
       long blobId2 = blobStore.createBlob(null);
-      transactionHelper.requiresNew(() -> {
-        blobStore.updateBlob(blobId2, (blobAccessor) -> {
+      blobStore.updateBlob(blobId2, (blobAccessor) -> {
 
-        });
-        return null;
       });
-
       blobStore.deleteBlob(blobId2);
       return null;
     });

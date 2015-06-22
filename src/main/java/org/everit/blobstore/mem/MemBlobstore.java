@@ -2,14 +2,17 @@ package org.everit.blobstore.mem;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.WeakHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 
 import javax.transaction.RollbackException;
-import javax.transaction.Status;
 import javax.transaction.SystemException;
 import javax.transaction.Transaction;
 import javax.transaction.TransactionManager;
@@ -21,6 +24,9 @@ import org.everit.blobstore.api.BlobAccessor;
 import org.everit.blobstore.api.BlobReader;
 import org.everit.blobstore.api.Blobstore;
 import org.everit.blobstore.api.BlobstoreException;
+import org.everit.blobstore.api.NoSuchBlobException;
+import org.everit.osgi.transaction.helper.api.TransactionHelper;
+import org.everit.osgi.transaction.helper.internal.TransactionHelperImpl;
 
 /**
  * Memory based transactional implementation of {@link Blobstore} that should be used only for
@@ -51,11 +57,11 @@ public class MemBlobstore implements Blobstore {
    */
   private final class BlobManipulationXAResource implements XAResource {
 
-    private final ReentrantLock lock;
+    private final Lock lock;
 
     private final int transactionTimeout = 600;
 
-    private BlobManipulationXAResource(final ReentrantLock lock) {
+    private BlobManipulationXAResource(final Lock lock) {
       this.lock = lock;
     }
 
@@ -130,10 +136,23 @@ public class MemBlobstore implements Blobstore {
 
   private final AtomicLong nextBlobId = new AtomicLong();
 
+  private final TransactionHelper transactionHelper;
+
   private final TransactionManager transactionManager;
 
+  private final Map<Transaction, Boolean> transactionsEnlisted = new WeakHashMap<>();
+
+  /**
+   * Constructor.
+   *
+   * @param transactionManager
+   *          The transaction manager that handles the transactions related to the blob.
+   */
   public MemBlobstore(final TransactionManager transactionManager) {
     this.transactionManager = transactionManager;
+    TransactionHelperImpl transactionHelperImpl = new TransactionHelperImpl();
+    transactionHelperImpl.setTransactionManager(transactionManager);
+    this.transactionHelper = transactionHelperImpl;
   }
 
   @Override
@@ -141,18 +160,38 @@ public class MemBlobstore implements Blobstore {
     BlobData data = new BlobData(0, new ArrayList<>());
     MemBlobAccessorImpl blobAccessor = new MemBlobAccessorImpl(data, 0, false);
     long blobId = nextBlobId.getAndIncrement();
-    if (createAction != null) {
-      createAction.accept(blobAccessor);
-    }
-    blobs.put(blobId, data);
+    runManipulationAction(() -> {
+      if (createAction != null) {
+        createAction.accept(blobAccessor);
+      }
+      blobs.put(blobId, data);
+    }, null);
     return blobId;
   }
 
   @Override
   public void deleteBlob(final long blobId) {
     BlobData blobData = getBlobDataForUpdateAndLock(blobId);
-    blobData.lock.lock();
-    runManipulationAction();
+    if (blobData == null) {
+      throw new NoSuchBlobException(blobId);
+    }
+    runManipulationAction(() -> blobs.remove(blobId), blobData.lock);
+
+  }
+
+  private boolean enlistBlobs(final Lock lock) {
+    try {
+      Transaction transaction = transactionManager.getTransaction();
+      if (transactionsEnlisted.containsKey(transaction)) {
+        return false;
+      }
+      transaction.enlistResource(new BlobManipulationXAResource(lock));
+      transactionsEnlisted.put(transaction, Boolean.TRUE);
+      return true;
+    } catch (SystemException | IllegalStateException | RollbackException e) {
+      throw new BlobstoreException(e);
+    }
+
   }
 
   private BlobData getBlobDataForUpdateAndLock(final long blobId) {
@@ -186,43 +225,34 @@ public class MemBlobstore implements Blobstore {
     readingAction.accept(new MemBlobAccessorImpl(data, data.version, true));
   }
 
-  private boolean runManipulationAction(final Consumer<BlobData> action) {
-    transactionManager.getStatus();
+  private void runManipulationAction(final Runnable action, final ReentrantLock lock) {
+    AtomicBoolean enlistedNow = new AtomicBoolean(false);
+    try {
+      transactionHelper.required(() -> {
+        enlistedNow.set(enlistBlobs(lock));
+        action.run();
+        return null;
+      });
+    } catch (RuntimeException e) {
+      if (enlistedNow.get() && lock != null && lock.isHeldByCurrentThread()) {
+        lock.unlock();
+      }
+      throw e;
+    }
   }
 
   @Override
   public void updateBlob(final long blobId, final Consumer<BlobAccessor> updatingAction) {
     Objects.requireNonNull(updatingAction);
-    int transactionStatus;
-    try {
-      transactionStatus = transactionManager.getStatus();
-    } catch (SystemException e) {
-      throw new BlobstoreException("Could not update blob due to transactional system exception",
-          e);
-    }
 
-    BlobData data = getBlobDataForUpdateAndLock(blobId);
+    BlobData blobData = getBlobDataForUpdateAndLock(blobId);
 
-    BlobData newData = new BlobData(data.version + 1, new ArrayList<Byte>(data.content));
+    runManipulationAction(() -> {
+      BlobData newBlobData = new BlobData(blobData.version + 1,
+          new ArrayList<Byte>(blobData.content));
 
-    if (transactionStatus == Status.STATUS_NO_TRANSACTION) {
-      try {
-        updatingAction.accept(new MemBlobAccessorImpl(newData, data.version, false));
-        blobs.put(blobId, newData);
-      } finally {
-        data.lock.unlock();
-      }
-    } else {
-      try {
-        Transaction transaction = transactionManager.getTransaction();
-        transaction.enlistResource(new BlobManipulationXAResource(data.lock));
-      } catch (SystemException | IllegalStateException | RollbackException e) {
-        if (data.lock.isLocked()) {
-          data.lock.unlock();
-        }
-        throw new BlobstoreException("Error during updating blob", e);
-      }
-      updatingAction.accept(new MemBlobAccessorImpl(newData, data.version, false));
-    }
+      updatingAction.accept(new MemBlobAccessorImpl(newBlobData, blobData.version, false));
+      blobs.put(blobId, newBlobData);
+    }, blobData.lock);
   }
 }
