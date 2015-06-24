@@ -68,6 +68,7 @@ public class MemBlobstore implements Blobstore {
     @Override
     public void commit(final Xid xid, final boolean onePhase) throws XAException {
       blobs.commitTransaction();
+      lastActiveTransactionOnThread.remove();
       if (lock != null) {
         lock.unlock();
       }
@@ -112,6 +113,7 @@ public class MemBlobstore implements Blobstore {
     @Override
     public void rollback(final Xid xid) throws XAException {
       blobs.rollbackTransaction();
+      lastActiveTransactionOnThread.remove();
       if (lock != null) {
         lock.unlock();
       }
@@ -132,7 +134,9 @@ public class MemBlobstore implements Blobstore {
     }
   }
 
-  private final BlobMap blobs = new BlobMap("blobs");
+  private final SuspendableBasicTxMap<Long, BlobData> blobs = new SuspendableBasicTxMap<>("blobs");
+
+  private final ThreadLocal<Transaction> lastActiveTransactionOnThread = new ThreadLocal<>();
 
   private final AtomicLong nextBlobId = new AtomicLong();
 
@@ -197,7 +201,7 @@ public class MemBlobstore implements Blobstore {
   private BlobData getBlobDataForUpdateAndLock(final long blobId) {
     BlobData blobData = blobs.get(blobId);
     if (blobData == null) {
-      throw new BlobstoreException("No blob available with id " + blobId);
+      throw new NoSuchBlobException(blobId);
     }
     BlobData blobDataInLock = null;
     while (!blobData.equals(blobDataInLock)) {
@@ -205,7 +209,7 @@ public class MemBlobstore implements Blobstore {
       blobDataInLock = blobs.get(blobId);
       if (blobDataInLock == null) {
         blobData.lock.unlock();
-        throw new BlobstoreException("No blob available with id " + blobId);
+        throw new NoSuchBlobException(blobId);
       }
       if (!blobData.equals(blobDataInLock)) {
         blobData.lock.unlock();
