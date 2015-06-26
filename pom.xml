@@ -91,8 +91,19 @@
       <scope>provided</scope>
     </dependency>
     <dependency>
+      <groupId>org.everit.transaction</groupId>
+      <artifactId>org.everit.transaction.managed.map.jta</artifactId>
+      <version>1.0.0-SNAPSHOT</version>
+    </dependency>
+
+    <dependency>
       <groupId>org.everit.blobstore</groupId>
       <artifactId>org.everit.blobstore.api</artifactId>
+      <version>1.0.0-SNAPSHOT</version>
+    </dependency>
+    <dependency>
+      <groupId>org.everit.transaction</groupId>
+      <artifactId>org.everit.transaction.managed.map.jta</artifactId>
       <version>1.0.0-SNAPSHOT</version>
     </dependency>
     <dependency>

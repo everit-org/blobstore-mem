@@ -5,7 +5,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.WeakHashMap;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.Lock;
@@ -16,9 +15,6 @@ import javax.transaction.RollbackException;
 import javax.transaction.SystemException;
 import javax.transaction.Transaction;
 import javax.transaction.TransactionManager;
-import javax.transaction.xa.XAException;
-import javax.transaction.xa.XAResource;
-import javax.transaction.xa.Xid;
 
 import org.everit.blobstore.api.BlobAccessor;
 import org.everit.blobstore.api.BlobReader;
@@ -27,6 +23,7 @@ import org.everit.blobstore.api.BlobstoreException;
 import org.everit.blobstore.api.NoSuchBlobException;
 import org.everit.osgi.transaction.helper.api.TransactionHelper;
 import org.everit.osgi.transaction.helper.internal.TransactionHelperImpl;
+import org.everit.transaction.managed.map.jta.ManagedMap;
 
 /**
  * Memory based transactional implementation of {@link Blobstore} that should be used only for
@@ -51,92 +48,7 @@ public class MemBlobstore implements Blobstore {
 
   }
 
-  /**
-   * An {@link XAResource} implementation that updates the blob data in case of a successful commit
-   * and releases the lock of that belongs to the blob on the end of the transaction.
-   */
-  private final class BlobManipulationXAResource implements XAResource {
-
-    private final Lock lock;
-
-    private final int transactionTimeout = 600;
-
-    private BlobManipulationXAResource(final Lock lock) {
-      this.lock = lock;
-    }
-
-    @Override
-    public void commit(final Xid xid, final boolean onePhase) throws XAException {
-      blobs.commitTransaction();
-      lastActiveTransactionOnThread.remove();
-      if (lock != null) {
-        lock.unlock();
-      }
-    }
-
-    @Override
-    public void end(final Xid xid, final int flags) throws XAException {
-      if (flags == XAResource.TMSUSPEND) {
-        blobs.suspendTransaction(xid);
-      }
-    }
-
-    @Override
-    public void forget(final Xid xid) throws XAException {
-      blobs.forgetTransaction();
-    }
-
-    @Override
-    public int getTransactionTimeout() throws XAException {
-      return transactionTimeout;
-    }
-
-    @Override
-    public boolean isSameRM(final XAResource xares) throws XAException {
-      return this.equals(xares);
-    }
-
-    @Override
-    public int prepare(final Xid xid) throws XAException {
-      boolean success = blobs.prepareTransaction();
-      if (!success) {
-        throw new XAException("Blob map transaction cannot be prepared.");
-      }
-      return XAResource.XA_OK;
-    }
-
-    @Override
-    public Xid[] recover(final int flag) throws XAException {
-      return null;
-    }
-
-    @Override
-    public void rollback(final Xid xid) throws XAException {
-      blobs.rollbackTransaction();
-      lastActiveTransactionOnThread.remove();
-      if (lock != null) {
-        lock.unlock();
-      }
-    }
-
-    @Override
-    public boolean setTransactionTimeout(final int seconds) throws XAException {
-      return false;
-    }
-
-    @Override
-    public void start(final Xid xid, final int flags) throws XAException {
-      if (flags == XAResource.TMRESUME) {
-        blobs.resumeTransaction(xid);
-      } else {
-        blobs.startTransaction(transactionTimeout, TimeUnit.SECONDS);
-      }
-    }
-  }
-
-  private final SuspendableBasicTxMap<Long, BlobData> blobs = new SuspendableBasicTxMap<>("blobs");
-
-  private final ThreadLocal<Transaction> lastActiveTransactionOnThread = new ThreadLocal<>();
+  private final ManagedMap<Long, BlobData> blobs;
 
   private final AtomicLong nextBlobId = new AtomicLong();
 
@@ -154,6 +66,7 @@ public class MemBlobstore implements Blobstore {
    */
   public MemBlobstore(final TransactionManager transactionManager) {
     this.transactionManager = transactionManager;
+    blobs = new ManagedMap<>(transactionManager);
     TransactionHelperImpl transactionHelperImpl = new TransactionHelperImpl();
     transactionHelperImpl.setTransactionManager(transactionManager);
     this.transactionHelper = transactionHelperImpl;
@@ -169,7 +82,7 @@ public class MemBlobstore implements Blobstore {
         createAction.accept(blobAccessor);
       }
       blobs.put(blobId, data);
-    }, null);
+    } , null);
     return blobId;
   }
 
@@ -257,6 +170,6 @@ public class MemBlobstore implements Blobstore {
 
       updatingAction.accept(new MemBlobAccessorImpl(newBlobData, blobData.version, false));
       blobs.put(blobId, newBlobData);
-    }, blobData.lock);
+    } , blobData.lock);
   }
 }
