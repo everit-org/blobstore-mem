@@ -92,8 +92,8 @@
     </dependency>
     <dependency>
       <groupId>org.everit.transaction</groupId>
-      <artifactId>org.everit.transaction.managed.map.jta</artifactId>
-      <version>1.0.0-SNAPSHOT</version>
+      <artifactId>org.everit.transaction.map.readcommited</artifactId>
+      <version>1.0.0</version>
     </dependency>
 
     <dependency>
@@ -103,8 +103,8 @@
     </dependency>
     <dependency>
       <groupId>org.everit.transaction</groupId>
-      <artifactId>org.everit.transaction.managed.map.jta</artifactId>
-      <version>1.0.0-SNAPSHOT</version>
+      <artifactId>org.everit.transaction.map.managed</artifactId>
+      <version>1.0.0</version>
     </dependency>
     <dependency>
       <groupId>org.everit.blobstore</groupId>

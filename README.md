@@ -1,2 +1,3 @@
 # blobstore-mem
-Transactional in-memory based implementation of Everit Blobstore API
+
+Transactional in-memory based implementation of Everit Blobstore API.
