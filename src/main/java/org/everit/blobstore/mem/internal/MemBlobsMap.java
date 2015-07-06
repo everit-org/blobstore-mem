@@ -29,11 +29,13 @@ import org.everit.transaction.map.readcommited.ReadCommitedTransactionalMap;
 /**
  * Transactional Map that helps managing locks during blob update.
  */
-public class BlobsMap implements TransactionalMap<Long, BlobData>, TransactionalLockHolder {
+public class MemBlobsMap implements TransactionalMap<Long, MemBlobData>, TransactionalBlobReleaser {
 
-  private final Map<Object, List<Lock>> lockByTransactionMap = new ConcurrentHashMap<>();
+  private final Map<Object, List<BlobAccessorAndLock>> blobAccessorAndLockByTransactionMap =
+      new ConcurrentHashMap<>();
 
-  private final TransactionalMap<Long, BlobData> wrapped = new ReadCommitedTransactionalMap<>(null);
+  private final TransactionalMap<Long, MemBlobData> wrapped =
+      new ReadCommitedTransactionalMap<>(null);
 
   @Override
   public void clear() {
@@ -46,7 +48,7 @@ public class BlobsMap implements TransactionalMap<Long, BlobData>, Transactional
     try {
       wrapped.commitTransaction();
     } finally {
-      releaseAllLocksForTransaction(transaction);
+      releaseAllBlobsForTransaction(transaction);
     }
   }
 
@@ -61,7 +63,7 @@ public class BlobsMap implements TransactionalMap<Long, BlobData>, Transactional
   }
 
   @Override
-  public Set<Entry<Long, BlobData>> entrySet() {
+  public Set<Entry<Long, MemBlobData>> entrySet() {
     return wrapped.entrySet();
   }
 
@@ -71,7 +73,7 @@ public class BlobsMap implements TransactionalMap<Long, BlobData>, Transactional
   }
 
   @Override
-  public BlobData get(final Object key) {
+  public MemBlobData get(final Object key) {
     return wrapped.get(key);
   }
 
@@ -96,38 +98,47 @@ public class BlobsMap implements TransactionalMap<Long, BlobData>, Transactional
   }
 
   @Override
-  public BlobData put(final Long key, final BlobData value) {
+  public MemBlobData put(final Long key, final MemBlobData value) {
     return wrapped.put(key, value);
   }
 
   @Override
-  public void putAll(final Map<? extends Long, ? extends BlobData> m) {
+  public void putAll(final Map<? extends Long, ? extends MemBlobData> m) {
     wrapped.putAll(m);
   }
 
-  private void releaseAllLocksForTransaction(final Object transaction) {
-    List<Lock> locks = lockByTransactionMap.remove(transaction);
+  private void releaseAllBlobsForTransaction(final Object transaction) {
+    List<BlobAccessorAndLock> blobAcessorAndLockList =
+        blobAccessorAndLockByTransactionMap.remove(transaction);
 
-    if (locks != null) {
-      for (Lock lock : locks) {
-        lock.unlock();
+    if (blobAcessorAndLockList != null) {
+      for (BlobAccessorAndLock blobAccessorAndLock : blobAcessorAndLockList) {
+        if (blobAccessorAndLock.lock != null) {
+          blobAccessorAndLock.lock.unlock();
+        }
+        if (blobAccessorAndLock.blobAccessor != null
+            && !blobAccessorAndLock.blobAccessor.isClosed()) {
+          throw new IllegalStateException(
+              "Blob accessor should have been closed before ending the transaction");
+        }
       }
     }
   }
 
   @Override
-  public void releaseLockAfterCommit(final Lock lock) {
+  public void releaseBlobAfterCommitOrRollback(final MemBlobAccessorImpl blobAccessor,
+      final Lock lock) {
     Object transaction = wrapped.getAssociatedTransaction();
-    List<Lock> locks = lockByTransactionMap.get(transaction);
-    if (locks == null) {
-      locks = new ArrayList<>();
-      lockByTransactionMap.put(transaction, locks);
+    List<BlobAccessorAndLock> list = blobAccessorAndLockByTransactionMap.get(transaction);
+    if (list == null) {
+      list = new ArrayList<>();
+      blobAccessorAndLockByTransactionMap.put(transaction, list);
     }
-    locks.add(lock);
+    list.add(new BlobAccessorAndLock(blobAccessor, lock));
   }
 
   @Override
-  public BlobData remove(final Object key) {
+  public MemBlobData remove(final Object key) {
     return wrapped.remove(key);
   }
 
@@ -139,7 +150,7 @@ public class BlobsMap implements TransactionalMap<Long, BlobData>, Transactional
   @Override
   public void rollbackTransaction() {
     Object transaction = wrapped.getAssociatedTransaction();
-    releaseAllLocksForTransaction(transaction);
+    releaseAllBlobsForTransaction(transaction);
     wrapped.rollbackTransaction();
   }
 
@@ -159,7 +170,7 @@ public class BlobsMap implements TransactionalMap<Long, BlobData>, Transactional
   }
 
   @Override
-  public Collection<BlobData> values() {
+  public Collection<MemBlobData> values() {
     return wrapped.values();
   }
 

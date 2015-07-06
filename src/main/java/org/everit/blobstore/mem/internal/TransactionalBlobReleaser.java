@@ -21,13 +21,16 @@ import java.util.concurrent.locks.Lock;
  * Helper interface to be able to lock a blob during update and delete until the end of the
  * transaction.
  */
-public interface TransactionalLockHolder {
+public interface TransactionalBlobReleaser {
 
   /**
-   * Unlocks the provided lock in the end of the transaction, after the blobs map is updated.
-   * 
+   * Unlocks the provided lock in the end of the transaction, after the blobs map is updated and
+   * checks if the blob accessor is closed.
+   *
    * @param lock
-   *          The lock that locks the manipulation of a specific blob.
+   *          Optional lock that locks the manipulation of a specific blob.
+   * @throws IllegalStateException
+   *           if the blob accessor is not closed.
    */
-  void releaseLockAfterCommit(Lock lock);
+  void releaseBlobAfterCommitOrRollback(MemBlobAccessorImpl blobAccessor, Lock lock);
 }

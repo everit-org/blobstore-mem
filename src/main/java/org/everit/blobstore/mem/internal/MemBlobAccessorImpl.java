@@ -24,9 +24,13 @@ import org.everit.blobstore.api.BlobAccessor;
  */
 public class MemBlobAccessorImpl implements BlobAccessor {
 
-  private final BlobData data;
+  private final MemBlobData blobData;
 
-  private long position = 0;
+  private final long blobId;
+
+  private boolean closed = false;
+
+  protected long position = 0;
 
   private final long previousVersion;
 
@@ -39,16 +43,23 @@ public class MemBlobAccessorImpl implements BlobAccessor {
    *          The metadata of the <code>BLOB</code>.
    * @param previousVersion
    *          The previous version of the <code>BLOB</code>. In case of readOnly mode or new
-   *          <code>BLOBs</code> this number should be the same as {@link BlobData#version}.
+   *          <code>BLOBs</code> this number should be the same as {@link MemBlobData#version}.
    * @param readOnly
    *          Whether this <code>BLOB</code> manipulation is allowed via this accessor or not.
    */
-  public MemBlobAccessorImpl(final BlobData data, final long previousVersion,
+  public MemBlobAccessorImpl(final long blobId, final MemBlobData data, final long previousVersion,
       final boolean readOnly) {
 
-    this.data = data;
+    this.blobId = blobId;
+    this.blobData = data;
     this.previousVersion = previousVersion;
     this.readOnly = readOnly;
+  }
+
+  private void checkClosed() {
+    if (closed) {
+      throw new IllegalStateException("Blob is already closed");
+    }
   }
 
   private void checkReadOnly() {
@@ -58,17 +69,34 @@ public class MemBlobAccessorImpl implements BlobAccessor {
   }
 
   @Override
+  public void close() {
+    this.closed = true;
+  }
+
+  @Override
+  public long getBlobId() {
+    return blobId;
+  }
+
+  public boolean isClosed() {
+    return closed;
+  }
+
+  @Override
   public long newVersion() {
-    return data.version;
+    checkClosed();
+    return blobData.version;
   }
 
   @Override
   public long position() {
+    checkClosed();
     return position;
   }
 
   @Override
   public int read(final byte[] b, final int off, final int len) {
+    checkClosed();
     int n = (int) (size() - position);
     if (n == 0) {
       return -1;
@@ -79,7 +107,7 @@ public class MemBlobAccessorImpl implements BlobAccessor {
 
     int loff = off;
     for (int i = 0; i < n; i++) {
-      b[loff] = data.content.get((int) position);
+      b[loff] = blobData.content.get((int) position);
       loff++;
       position++;
     }
@@ -88,6 +116,7 @@ public class MemBlobAccessorImpl implements BlobAccessor {
 
   @Override
   public void seek(final long pos) {
+    checkClosed();
     if (pos > size() || pos < 0) {
       throw new IllegalArgumentException();
     }
@@ -96,31 +125,35 @@ public class MemBlobAccessorImpl implements BlobAccessor {
 
   @Override
   public long size() {
-    return data.content.size();
+    checkClosed();
+    return blobData.content.size();
   }
 
   @Override
   public void truncate(final long newLength) {
+    checkClosed();
     checkReadOnly();
     if (newLength < 0 || newLength > size() || position > newLength) {
       throw new IllegalArgumentException();
     }
-    data.content = new ArrayList<Byte>(data.content.subList(0, (int) newLength));
+    blobData.content = new ArrayList<Byte>(blobData.content.subList(0, (int) newLength));
   }
 
   @Override
   public long version() {
+    checkClosed();
     return previousVersion;
   }
 
   @Override
   public void write(final byte[] b, final int off, final int len) {
+    checkClosed();
     checkReadOnly();
     for (int i = 0; i < len; i++) {
       if (position < size()) {
-        data.content.set((int) position, b[off + i]);
+        blobData.content.set((int) position, b[off + i]);
       } else {
-        data.content.add(b[off + i]);
+        blobData.content.add(b[off + i]);
       }
       position++;
     }

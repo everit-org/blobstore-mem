@@ -16,24 +16,22 @@
 package org.everit.blobstore.mem;
 
 import java.util.ArrayList;
-import java.util.Objects;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.Consumer;
 
+import javax.transaction.Status;
+import javax.transaction.SystemException;
 import javax.transaction.TransactionManager;
 
 import org.everit.blobstore.api.BlobAccessor;
 import org.everit.blobstore.api.BlobReader;
 import org.everit.blobstore.api.Blobstore;
-import org.everit.blobstore.api.BlobstoreException;
 import org.everit.blobstore.api.NoSuchBlobException;
-import org.everit.blobstore.mem.internal.BlobData;
-import org.everit.blobstore.mem.internal.BlobsMap;
 import org.everit.blobstore.mem.internal.MemBlobAccessorImpl;
-import org.everit.blobstore.mem.internal.TransactionalLockHolder;
-import org.everit.osgi.transaction.helper.api.TransactionHelper;
-import org.everit.osgi.transaction.helper.internal.TransactionHelperImpl;
+import org.everit.blobstore.mem.internal.MemBlobData;
+import org.everit.blobstore.mem.internal.MemBlobsMap;
+import org.everit.blobstore.mem.internal.TransactionalBlobReleaser;
 import org.everit.transaction.map.managed.ManagedMap;
+import org.everit.transaction.unchecked.UncheckedSystemException;
 
 /**
  * Memory based transactional implementation of {@link Blobstore} that should be used only for
@@ -41,13 +39,13 @@ import org.everit.transaction.map.managed.ManagedMap;
  */
 public class MemBlobstore implements Blobstore {
 
-  private final ManagedMap<Long, BlobData> blobs;
+  private final ManagedMap<Long, MemBlobData> blobs;
 
   private final AtomicLong nextBlobId = new AtomicLong();
 
-  private final TransactionalLockHolder transactionalLockHolder;
+  private final TransactionalBlobReleaser transactionalLockHolder;
 
-  private final TransactionHelper transactionHelper;
+  private final TransactionManager transactionManager;
 
   /**
    * Constructor.
@@ -56,52 +54,55 @@ public class MemBlobstore implements Blobstore {
    *          The transaction manager that handles the transactions related to the blob.
    */
   public MemBlobstore(final TransactionManager transactionManager) {
-    BlobsMap blobsMap = new BlobsMap();
+    MemBlobsMap blobsMap = new MemBlobsMap();
     blobs = new ManagedMap<>(blobsMap, transactionManager);
     this.transactionalLockHolder = blobsMap;
-    TransactionHelperImpl transactionHelperImpl = new TransactionHelperImpl();
-    transactionHelperImpl.setTransactionManager(transactionManager);
-    this.transactionHelper = transactionHelperImpl;
+    this.transactionManager = transactionManager;
+  }
+
+  private void checkActiveTransaction() {
+    try {
+      int status = transactionManager.getStatus();
+      if (status != Status.STATUS_ACTIVE) {
+        throw new IllegalStateException("Blobs can be manipulated only within active transactions");
+      }
+    } catch (SystemException e) {
+      throw new UncheckedSystemException(e);
+    }
 
   }
 
   @Override
-  public long createBlob(final Consumer<BlobAccessor> createAction) {
-    BlobData data = new BlobData(0, new ArrayList<>());
-    MemBlobAccessorImpl blobAccessor = new MemBlobAccessorImpl(data, 0, false);
+  public BlobAccessor createBlob() {
+    checkActiveTransaction();
+    MemBlobData data = new MemBlobData(0, new ArrayList<>());
     long blobId = nextBlobId.getAndIncrement();
-    transactionHelper.required(() -> {
-      if (createAction != null) {
-        createAction.accept(blobAccessor);
-      }
-      blobs.put(blobId, data);
-      return null;
-    });
-    return blobId;
+    MemBlobAccessorImpl blobAccessor = new MemBlobAccessorImpl(blobId, data, 0, false);
+    blobs.put(blobId, data);
+    transactionalLockHolder.releaseBlobAfterCommitOrRollback(blobAccessor, null);
+    return blobAccessor;
   }
 
   @Override
   public void deleteBlob(final long blobId) {
-    BlobData blobData = getBlobDataForUpdateAndLock(blobId);
+    checkActiveTransaction();
+    MemBlobData blobData = getBlobDataForUpdateAndLock(blobId);
     if (blobData == null) {
       throw new NoSuchBlobException(blobId);
     }
-    transactionHelper.required(() -> {
-      try {
-        blobs.remove(blobId);
-      } finally {
-        transactionalLockHolder.releaseLockAfterCommit(blobData.lock);
-      }
-      return null;
-    });
+    try {
+      blobs.remove(blobId);
+    } finally {
+      transactionalLockHolder.releaseBlobAfterCommitOrRollback(null, blobData.lock);
+    }
   }
 
-  private BlobData getBlobDataForUpdateAndLock(final long blobId) {
-    BlobData blobData = blobs.get(blobId);
+  private MemBlobData getBlobDataForUpdateAndLock(final long blobId) {
+    MemBlobData blobData = blobs.get(blobId);
     if (blobData == null) {
       throw new NoSuchBlobException(blobId);
     }
-    BlobData blobDataInLock = null;
+    MemBlobData blobDataInLock = null;
     while (!blobData.equals(blobDataInLock)) {
       blobData.lock.lock();
       blobDataInLock = blobs.get(blobId);
@@ -119,31 +120,55 @@ public class MemBlobstore implements Blobstore {
   }
 
   @Override
-  public void readBlob(final long blobId, final Consumer<BlobReader> readingAction) {
-    BlobData data = blobs.get(blobId);
+  public BlobReader readBlob(final long blobId) {
+    checkActiveTransaction();
+    MemBlobData data = blobs.get(blobId);
     if (data == null) {
-      throw new BlobstoreException("Blob not available");
+      throw new NoSuchBlobException(blobId);
     }
-    readingAction.accept(new MemBlobAccessorImpl(data, data.version, true));
+    MemBlobAccessorImpl blobReader = new MemBlobAccessorImpl(blobId, data, data.version, true);
+    transactionalLockHolder.releaseBlobAfterCommitOrRollback(blobReader, null);
+    return blobReader;
   }
 
   @Override
-  public void updateBlob(final long blobId, final Consumer<BlobAccessor> updatingAction) {
-    Objects.requireNonNull(updatingAction);
+  public BlobReader readBlobForUpdate(final long blobId) {
+    checkActiveTransaction();
 
-    BlobData blobData = getBlobDataForUpdateAndLock(blobId);
+    MemBlobData blobData = getBlobDataForUpdateAndLock(blobId);
 
-    transactionHelper.required(() -> {
-      try {
-        BlobData newBlobData = new BlobData(blobData.version + 1,
-            new ArrayList<Byte>(blobData.content), blobData.lock);
+    if (blobData == null) {
+      throw new NoSuchBlobException(blobId);
+    }
 
-        updatingAction.accept(new MemBlobAccessorImpl(newBlobData, blobData.version, false));
-        blobs.put(blobId, newBlobData);
-      } finally {
-        transactionalLockHolder.releaseLockAfterCommit(blobData.lock);
-      }
-      return null;
-    });
+    MemBlobAccessorImpl blobAccessorImpl =
+        new MemBlobAccessorImpl(blobId, blobData, blobData.version, true);
+
+    transactionalLockHolder.releaseBlobAfterCommitOrRollback(blobAccessorImpl, blobData.lock);
+
+    return blobAccessorImpl;
+  }
+
+  @Override
+  public BlobAccessor updateBlob(final long blobId) {
+    checkActiveTransaction();
+    MemBlobData blobData = getBlobDataForUpdateAndLock(blobId);
+
+    if (blobData == null) {
+      throw new NoSuchBlobException(blobId);
+    }
+
+    MemBlobData newBlobData = new MemBlobData(blobData.version + 1,
+        new ArrayList<Byte>(blobData.content), blobData.lock);
+
+    blobs.put(blobId, newBlobData);
+
+    MemBlobAccessorImpl blobAccessor =
+        new MemBlobAccessorImpl(blobId, newBlobData, blobData.version, false);
+
+    transactionalLockHolder.releaseBlobAfterCommitOrRollback(blobAccessor, blobData.lock);
+
+    return blobAccessor;
+
   }
 }

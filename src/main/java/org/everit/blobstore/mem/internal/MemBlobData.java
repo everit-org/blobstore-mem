@@ -21,14 +21,14 @@ import java.util.concurrent.locks.ReentrantLock;
 /**
  * Metadata and content of blobs.
  */
-public class BlobData {
+public class MemBlobData {
   public List<Byte> content;
 
   public final ReentrantLock lock;
 
   public long version;
 
-  public BlobData(final long version, final List<Byte> content) {
+  public MemBlobData(final long version, final List<Byte> content) {
     this(version, content, null);
   }
 
@@ -42,7 +42,7 @@ public class BlobData {
    * @param lock
    *          The lock that refuses the manipulation of the same blob on parallel threads.
    */
-  public BlobData(final long version, final List<Byte> content, final ReentrantLock lock) {
+  public MemBlobData(final long version, final List<Byte> content, final ReentrantLock lock) {
     this.version = version;
     this.content = content;
     this.lock = (lock != null) ? lock : new ReentrantLock();
