@@ -133,8 +133,16 @@ public class MemBlobAccessorImpl implements BlobAccessor {
   public void truncate(final long newLength) {
     checkClosed();
     checkReadOnly();
-    if (newLength < 0 || newLength > size() || position > newLength) {
-      throw new IllegalArgumentException();
+    if (newLength < 0) {
+      throw new IllegalArgumentException("Blob cannot be truncated to a negative length");
+    }
+    if (newLength > size()) {
+      throw new IllegalArgumentException(
+          "Blob size cannot be extended to a bigger size by calling truncate");
+    }
+    if (position > newLength) {
+      throw new IllegalArgumentException(
+          "Blob cannot be truncated to a size that is before the current position");
     }
     blobData.content = new ArrayList<Byte>(blobData.content.subList(0, (int) newLength));
   }
