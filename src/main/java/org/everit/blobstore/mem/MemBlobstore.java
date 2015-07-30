@@ -22,10 +22,10 @@ import javax.transaction.Status;
 import javax.transaction.SystemException;
 import javax.transaction.TransactionManager;
 
-import org.everit.blobstore.api.BlobAccessor;
-import org.everit.blobstore.api.BlobReader;
-import org.everit.blobstore.api.Blobstore;
-import org.everit.blobstore.api.NoSuchBlobException;
+import org.everit.blobstore.BlobAccessor;
+import org.everit.blobstore.BlobReader;
+import org.everit.blobstore.Blobstore;
+import org.everit.blobstore.NoSuchBlobException;
 import org.everit.blobstore.mem.internal.MemBlobAccessorImpl;
 import org.everit.blobstore.mem.internal.MemBlobData;
 import org.everit.blobstore.mem.internal.MemBlobsMap;

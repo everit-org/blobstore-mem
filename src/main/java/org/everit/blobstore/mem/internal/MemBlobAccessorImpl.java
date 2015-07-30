@@ -17,7 +17,7 @@ package org.everit.blobstore.mem.internal;
 
 import java.util.ArrayList;
 
-import org.everit.blobstore.api.BlobAccessor;
+import org.everit.blobstore.BlobAccessor;
 
 /**
  * Internal {@link BlobAccessor} implementation for {@link org.everit.blobstore.mem.MemBlobstore}.
