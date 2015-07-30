@@ -83,13 +83,13 @@ public class MemBlobAccessorImpl implements BlobAccessor {
   }
 
   @Override
-  public long newVersion() {
+  public long getNewVersion() {
     checkClosed();
     return blobData.version;
   }
 
   @Override
-  public long position() {
+  public long getPosition() {
     checkClosed();
     return position;
   }
@@ -97,7 +97,7 @@ public class MemBlobAccessorImpl implements BlobAccessor {
   @Override
   public int read(final byte[] b, final int off, final int len) {
     checkClosed();
-    int n = (int) (size() - position);
+    int n = (int) (getSize() - position);
     if (n == 0) {
       return -1;
     }
@@ -117,14 +117,14 @@ public class MemBlobAccessorImpl implements BlobAccessor {
   @Override
   public void seek(final long pos) {
     checkClosed();
-    if (pos > size() || pos < 0) {
+    if (pos > getSize() || pos < 0) {
       throw new IllegalArgumentException();
     }
     position = pos;
   }
 
   @Override
-  public long size() {
+  public long getSize() {
     checkClosed();
     return blobData.content.size();
   }
@@ -136,7 +136,7 @@ public class MemBlobAccessorImpl implements BlobAccessor {
     if (newLength < 0) {
       throw new IllegalArgumentException("Blob cannot be truncated to a negative length");
     }
-    if (newLength > size()) {
+    if (newLength > getSize()) {
       throw new IllegalArgumentException(
           "Blob size cannot be extended to a bigger size by calling truncate");
     }
@@ -148,7 +148,7 @@ public class MemBlobAccessorImpl implements BlobAccessor {
   }
 
   @Override
-  public long version() {
+  public long getVersion() {
     checkClosed();
     return previousVersion;
   }
@@ -158,7 +158,7 @@ public class MemBlobAccessorImpl implements BlobAccessor {
     checkClosed();
     checkReadOnly();
     for (int i = 0; i < len; i++) {
-      if (position < size()) {
+      if (position < getSize()) {
         blobData.content.set((int) position, b[off + i]);
       } else {
         blobData.content.add(b[off + i]);
