@@ -25,7 +25,7 @@ import org.everit.osgi.transaction.helper.api.TransactionHelper;
 import org.everit.osgi.transaction.helper.internal.TransactionHelperImpl;
 import org.junit.Before;
 
-public class BlobstoreTest extends AbstractBlobstoreTest {
+public class MemBlobstoreTest extends AbstractBlobstoreTest {
 
   private MemBlobstore memBlobstore;
 
