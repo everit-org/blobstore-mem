@@ -21,8 +21,8 @@ import javax.transaction.xa.XAException;
 import org.apache.geronimo.transaction.manager.GeronimoTransactionManager;
 import org.everit.blobstore.Blobstore;
 import org.everit.blobstore.testbase.AbstractBlobstoreTest;
-import org.everit.osgi.transaction.propagator.jta.JTATransactionPropagator;
 import org.everit.transaction.propagator.TransactionPropagator;
+import org.everit.transaction.propagator.jta.JTATransactionPropagator;
 import org.junit.Before;
 
 public class MemBlobstoreTest extends AbstractBlobstoreTest {
