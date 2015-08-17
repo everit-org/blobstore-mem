@@ -81,9 +81,11 @@
         <extensions>true</extensions>
         <configuration>
           <instructions>
-            <Import-Package>org.everit.blobstore;version="[1.0,1.1)",
-                           org.everit.transaction.map;version="[1.0,2)",
-                           *</Import-Package>
+            <Import-Package>
+              org.everit.blobstore;version="[1.0,1.1)",
+              org.everit.transaction.map;version="[1.0,2)",
+              *
+            </Import-Package>
             <Export-Package>org.everit.blobstore.mem</Export-Package>
           </instructions>
         </configuration>
