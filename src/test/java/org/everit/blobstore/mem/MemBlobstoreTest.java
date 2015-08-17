@@ -21,15 +21,15 @@ import javax.transaction.xa.XAException;
 import org.apache.geronimo.transaction.manager.GeronimoTransactionManager;
 import org.everit.blobstore.Blobstore;
 import org.everit.blobstore.testbase.AbstractBlobstoreTest;
-import org.everit.osgi.transaction.helper.api.TransactionHelper;
-import org.everit.osgi.transaction.helper.internal.TransactionHelperImpl;
+import org.everit.osgi.transaction.helper.internal.JTATransactionPropagator;
+import org.everit.transaction.propagator.TransactionPropagator;
 import org.junit.Before;
 
 public class MemBlobstoreTest extends AbstractBlobstoreTest {
 
   private MemBlobstore memBlobstore;
 
-  private TransactionHelperImpl transactionHelper;
+  private JTATransactionPropagator transactionPropagator;
 
   private TransactionManager transactionManager;
 
@@ -40,8 +40,7 @@ public class MemBlobstoreTest extends AbstractBlobstoreTest {
     } catch (XAException e) {
       throw new RuntimeException(e);
     }
-    transactionHelper = new TransactionHelperImpl();
-    transactionHelper.setTransactionManager(transactionManager);
+    transactionPropagator = new JTATransactionPropagator(transactionManager);
 
     memBlobstore = new MemBlobstore(transactionManager);
   }
@@ -52,8 +51,8 @@ public class MemBlobstoreTest extends AbstractBlobstoreTest {
   }
 
   @Override
-  protected TransactionHelper getTransactionHelper() {
-    return transactionHelper;
+  protected TransactionPropagator getTransactionPropagator() {
+    return transactionPropagator;
   }
 
 }
